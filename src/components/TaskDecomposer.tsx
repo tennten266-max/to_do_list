@@ -1,14 +1,8 @@
 'use client'
 
 import { FormEvent, useState } from 'react'
-import type { Subtask } from '@/lib/decompose'
-import {
-  SITUATION_OPTIONS,
-  createDummySubtasks,
-  createSituationSubtasks,
-  isVagueTask,
-  type SituationOption,
-} from '@/lib/dummyTodos'
+import type { DecomposedStep, Subtask } from '@/lib/decompose'
+import type { TaskAnalysis } from '@/lib/analyze'
 
 type ParentTask = {
   id: string
@@ -17,17 +11,19 @@ type ParentTask = {
   subtasks: Subtask[]
 }
 
-function wait(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
 function SituationModal({
+  task,
+  analysis,
   onSelect,
   onClose,
 }: {
-  onSelect: (option: SituationOption) => void
+  task: string
+  analysis: TaskAnalysis
+  onSelect: (answer: string) => void
   onClose: () => void
 }) {
+  if (!analysis.needsClarification || !analysis.question || !analysis.options) return null
+
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center p-4 sm:items-center">
       <button
@@ -44,27 +40,37 @@ function SituationModal({
       >
         <p className="text-xs font-semibold tracking-wide text-orange-500 uppercase">状況確認</p>
         <h2 id="situation-title" className="mt-1 text-xl font-semibold tracking-tight text-stone-800">
-          今の状況を教えてください
+          {analysis.question}
         </h2>
         <p className="mt-2 text-sm text-stone-500">
-          やりたいことは「就活する」ですね。今の状況にいちばん近いものを選んでください。
+          「{task}」について、いちばん近い状況を選んでください。
         </p>
         <div className="mt-5 grid grid-cols-1 gap-2">
-          {SITUATION_OPTIONS.map((option) => (
+          {analysis.options.map((option) => (
             <button
-              key={option.id}
+              key={option}
               type="button"
               onClick={() => onSelect(option)}
               className="rounded-2xl border border-orange-100 bg-orange-50 px-4 py-3 text-left transition hover:border-orange-400 hover:bg-amber-50"
             >
-              <span className="block font-semibold text-stone-800">{option.label}</span>
-              <span className="mt-0.5 block text-xs text-stone-500">{option.hint}</span>
+              <span className="block font-semibold text-stone-800">{option}</span>
             </button>
           ))}
         </div>
       </div>
     </div>
   )
+}
+
+async function readApiResponse<T>(response: Response): Promise<T> {
+  const data = (await response.json()) as T | { error?: unknown }
+  if (!response.ok) {
+    const message = data && typeof data === 'object' && 'error' in data && typeof data.error === 'string'
+      ? data.error
+      : '通信に失敗しました'
+    throw new Error(message)
+  }
+  return data as T
 }
 
 function ParentTaskCard({
@@ -167,21 +173,32 @@ function TaskCardSkeleton() {
 export default function TaskDecomposer() {
   const [draft, setDraft] = useState('就活する')
   const [pendingTitle, setPendingTitle] = useState('')
+  const [analysis, setAnalysis] = useState<TaskAnalysis | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
   const [tasks, setTasks] = useState<ParentTask[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  function addTask(title: string, subtasks: Subtask[], situation?: string) {
+  function addTask(title: string, steps: DecomposedStep[], situation?: string) {
     setTasks((current) => [
       {
         id: crypto.randomUUID(),
         title,
         situation,
-        subtasks,
+        subtasks: steps.map((step) => ({ ...step, id: crypto.randomUUID(), done: false })),
       },
       ...current,
     ])
+  }
+
+  async function decomposeTask(title: string, answer?: string) {
+    const response = await fetch('/api/decompose-task', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task: title, ...(answer ? { answer } : {}) }),
+    })
+    const steps = await readApiResponse<DecomposedStep[]>(response)
+    addTask(title, steps, answer)
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -194,29 +211,45 @@ export default function TaskDecomposer() {
     if (loading) return
 
     setError('')
-
-    if (isVagueTask(title)) {
-      setPendingTitle(title)
-      setModalOpen(true)
-      return
-    }
-
     setLoading(true)
     setDraft('')
-    await wait(1000)
-    addTask(title, createDummySubtasks(title))
-    setLoading(false)
+    try {
+      const response = await fetch('/api/analyze-task', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task: title }),
+      })
+      const result = await readApiResponse<TaskAnalysis>(response)
+      if (result.needsClarification) {
+        setPendingTitle(title)
+        setAnalysis(result)
+        setModalOpen(true)
+        setLoading(false)
+        return
+      }
+      await decomposeTask(title)
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'タスクの追加に失敗しました')
+    } finally {
+      setLoading(false)
+    }
   }
 
-  async function handleSelectSituation(option: SituationOption) {
-    const title = pendingTitle || draft.trim() || '就活する'
+  async function handleSelectSituation(answer: string) {
+    const title = pendingTitle
     setModalOpen(false)
+    setAnalysis(null)
     setDraft('')
     setPendingTitle('')
     setLoading(true)
-    await wait(400)
-    addTask(title, createSituationSubtasks(option.id), option.label)
-    setLoading(false)
+    setError('')
+    try {
+      await decomposeTask(title, answer)
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'タスクの追加に失敗しました')
+    } finally {
+      setLoading(false)
+    }
   }
 
   function toggleSubtask(taskId: string, subtaskId: string) {
@@ -289,8 +322,17 @@ export default function TaskDecomposer() {
         <ParentTaskCard key={task.id} task={task} onToggle={toggleSubtask} />
       ))}
 
-      {modalOpen ? (
-        <SituationModal onSelect={handleSelectSituation} onClose={() => setModalOpen(false)} />
+      {modalOpen && analysis ? (
+        <SituationModal
+          task={pendingTitle}
+          analysis={analysis}
+          onSelect={handleSelectSituation}
+          onClose={() => {
+            setModalOpen(false)
+            setAnalysis(null)
+            setPendingTitle('')
+          }}
+        />
       ) : null}
     </div>
   )

@@ -30,7 +30,7 @@
 - Keep `XAI_API_KEY` and other server environment variables in server-only code; never expose them through client components or `NEXT_PUBLIC_*` variables.
 - Validate model output through `parseModelJson`, `normalizeTaskAnalysis`, or `normalizeSteps` before returning or rendering it. These paths support plain JSON and fenced JSON where implemented.
 - API response shapes differ: `/api/analyze-task` returns normalized analysis, `/api/decompose-task` returns a steps array, and `/api/decompose` returns `{ steps }`. Preserve the existing shape when changing consumers.
-- `XAI_MODEL` is optional, but fallback models currently differ: `/api/decompose` uses `grok-beta`, while the other two routes use `grok-2-1212`.
+- `XAI_MODEL` is optional; all xAI routes use `grok-2` by default.
 - Keep user-facing API errors separate from sensitive provider or exception diagnostics; do not return raw exception messages from an API response.
 - Preserve the API's 3-to-5-step and 1-to-15-minute constraints unless the product requirement explicitly changes them.
 
@@ -40,3 +40,13 @@
 - For decomposition changes, check malformed JSON, fenced JSON, invalid steps, and boundary minute values.
 - For analysis changes, check missing task input, malformed model output, and exactly four options when clarification is needed.
 - Run `npm run lint` and `npx tsc --noEmit` after changes; run `npm run build` when changing routing, configuration, dependencies, or server behavior.
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->
