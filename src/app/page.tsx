@@ -9,7 +9,7 @@ export default function HomePage() {
           to doを細分化する
         </h1>
         <p className="mt-2 text-sm text-stone-500">
-          「就活する」のようにアバウトな入力なら、状況の4択から具体的なToDoに分けます。
+          「就活する」のようにアバウトな入力から、状況の4択から具体的なToDoに分けます。
         </p>
       </header>
       <TaskDecomposer />

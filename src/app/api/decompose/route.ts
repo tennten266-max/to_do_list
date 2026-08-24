@@ -22,21 +22,21 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'タスクを入力してください' }, { status: 400 })
     }
 
-    const apiKey = process.env.XAI_API_KEY
+    const apiKey = process.env.GROQ_API_KEY
     if (!apiKey) {
       return NextResponse.json(
-        { error: 'XAI_API_KEY が設定されていません。.env.local を確認してください。' },
+        { error: 'GROQ_API_KEY が設定されていません。.env.local を確認してください。' },
         { status: 500 },
       )
     }
 
     const xai = new OpenAI({
       apiKey,
-      baseURL: 'https://api.x.ai/v1',
+      baseURL: 'https://api.groq.com/openai/v1',
     })
 
     const completion = await xai.chat.completions.create({
-      model: process.env.XAI_MODEL ?? 'grok-beta',
+      model: process.env.GROQ_MODEL ?? 'openai/gpt-oss-120b',
       temperature: 0.4,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },

@@ -9,7 +9,7 @@ npm install
 cp .env.example .env.local
 ```
 
-`.env.local` に xAI の `XAI_API_KEY` を設定します。モデルは `grok-beta`（または `grok-2-1212`）です。
+`.env.local` に xAI の `XAI_API_KEY` を設定します。モデルは `grok-2` です。利用できない場合は `XAI_MODEL` に xAI アカウントで利用可能なモデル名を指定してください。
 
 ```bash
 npm run dev

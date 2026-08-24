@@ -31,15 +31,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'タスクを入力してください' }, { status: 400 })
     }
 
-    const apiKey = process.env.XAI_API_KEY
+    const apiKey = process.env.GROQ_API_KEY
     if (!apiKey) {
-      return NextResponse.json({ error: 'XAI_API_KEY が設定されていません。.env.local を確認してください。' }, { status: 500 })
+      return NextResponse.json({ error: 'GROQ_API_KEY が設定されていません。.env.local を確認してください。' }, { status: 500 })
     }
 
-    const xai = new OpenAI({ apiKey, baseURL: 'https://api.x.ai/v1' })
+    const client = new OpenAI({
+      apiKey,
+      baseURL: 'https://api.groq.com/openai/v1',
+    })
     const userPrompt = answer ? `タスク: ${task}\nユーザーの状況: ${answer}` : `タスク: ${task}`
-    const completion = await xai.chat.completions.create({
-      model: process.env.XAI_MODEL ?? 'grok-2-1212',
+    const completion = await client.chat.completions.create({
+      model: process.env.GROQ_MODEL ?? 'openai/gpt-oss-120b',
       temperature: 0.4,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
@@ -54,7 +57,8 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json(normalizeSteps(parseModelJson(content)))
-  } catch {
-    return NextResponse.json({ error: 'タスク分解に失敗しました' }, { status: 500 })
+  } catch (error) {
+    console.error('decompose-task API error:', error)
+    return NextResponse.json({ error: 'AI APIへの接続またはタスク分解に失敗しました。.env.local のキーとモデル設定を確認してください。' }, { status: 502 })
   }
 }
