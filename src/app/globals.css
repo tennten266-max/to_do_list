@@ -1,0 +1,20 @@
+@import 'tailwindcss';
+
+:root {
+  color-scheme: light;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  min-height: 100svh;
+  overflow-y: auto;
+  color: #44403c;
+  background:
+    radial-gradient(1100px 420px at 8% -8%, #fdba74 0%, transparent 55%),
+    radial-gradient(900px 380px at 100% 0%, #fde68a 0%, transparent 48%),
+    radial-gradient(800px 360px at 50% 110%, #bbf7d0 0%, transparent 42%),
+    #fff7ed;
+}
