@@ -1,14 +1,57 @@
 'use client'
 
-import { FormEvent, useState } from 'react'
+import { FormEvent, useEffect, useState } from 'react'
+import { createClient } from '@/lib/supabase/client'
 import type { DecomposedStep, Subtask } from '@/lib/decompose'
 import type { TaskAnalysis } from '@/lib/analyze'
+
+const GUEST_TASKS_KEY = 'todo-decomposer-guest-tasks'
 
 type ParentTask = {
   id: string
   title: string
   situation?: string
   subtasks: Subtask[]
+}
+
+function serializeTaskForDb(task: ParentTask) {
+  return JSON.stringify({
+    title: task.title,
+    situation: task.situation ?? null,
+    subtasks: task.subtasks,
+  })
+}
+
+function parseTaskFromDbTitle(rawTitle: string): { title: string; situation?: string; subtasks: Subtask[] } {
+  try {
+    const parsed = JSON.parse(rawTitle) as {
+      title?: string
+      situation?: string | null
+      subtasks?: Subtask[]
+    }
+
+    if (parsed && typeof parsed === 'object' && Array.isArray(parsed.subtasks)) {
+      return {
+        title: typeof parsed.title === 'string' ? parsed.title : rawTitle,
+        situation: typeof parsed.situation === 'string' ? parsed.situation : undefined,
+        subtasks: parsed.subtasks,
+      }
+    }
+  } catch {
+    // plain text title, fall through below
+  }
+
+  return {
+    title: rawTitle,
+    subtasks: [
+      {
+        id: crypto.randomUUID(),
+        action: rawTitle,
+        minutes: 15,
+        done: false,
+      },
+    ],
+  }
 }
 
 function SituationModal({
@@ -76,9 +119,11 @@ async function readApiResponse<T>(response: Response): Promise<T> {
 function ParentTaskCard({
   task,
   onToggle,
+  onDelete,
 }: {
   task: ParentTask
   onToggle: (taskId: string, subtaskId: string) => void
+  onDelete: (taskId: string) => void
 }) {
   const doneCount = task.subtasks.filter((item) => item.done).length
   const total = task.subtasks.length
@@ -93,13 +138,22 @@ function ParentTaskCard({
           <h2 className="mt-1 text-lg font-semibold tracking-tight text-stone-800">{task.title}</h2>
           {task.situation ? <p className="mt-1 text-sm text-stone-500">{task.situation}</p> : null}
         </div>
-        <p
-          className={`shrink-0 rounded-full px-3 py-1 text-sm font-semibold ${
-            allDone ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'
-          }`}
-        >
-          完了 {doneCount}/{total}
-        </p>
+        <div className="flex shrink-0 items-center gap-2">
+          <p
+            className={`rounded-full px-3 py-1 text-sm font-semibold ${
+              allDone ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'
+            }`}
+          >
+            完了 {doneCount}/{total}
+          </p>
+          <button
+            type="button"
+            onClick={() => onDelete(task.id)}
+            className="rounded-full border border-stone-200 bg-white px-2.5 py-1 text-[11px] font-medium text-stone-600 transition hover:border-red-200 hover:text-red-600"
+          >
+            削除
+          </button>
+        </div>
       </header>
 
       <div className="mb-4 h-2 overflow-hidden rounded-full bg-orange-100">
@@ -171,24 +225,222 @@ function TaskCardSkeleton() {
 }
 
 export default function TaskDecomposer() {
-  const [draft, setDraft] = useState('就活する')
+  const [draft, setDraft] = useState('')
   const [pendingTitle, setPendingTitle] = useState('')
   const [analysis, setAnalysis] = useState<TaskAnalysis | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
   const [tasks, setTasks] = useState<ParentTask[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [userId, setUserId] = useState<string | null>(null)
+  const [authReady, setAuthReady] = useState(false)
+
+  const isAuthenticated = Boolean(userId)
+
+  function readLocalTasks(): ParentTask[] {
+    if (typeof window === 'undefined') return []
+
+    try {
+      const savedTasks = window.localStorage.getItem(GUEST_TASKS_KEY)
+      if (!savedTasks) return []
+
+      const parsedTasks = JSON.parse(savedTasks) as ParentTask[]
+      return Array.isArray(parsedTasks) ? parsedTasks : []
+    } catch {
+      window.localStorage.removeItem(GUEST_TASKS_KEY)
+      return []
+    }
+  }
+
+  function persistLocalTasks(nextTasks: ParentTask[]) {
+    if (typeof window === 'undefined') return
+
+    try {
+      if (nextTasks.length === 0) {
+        window.localStorage.removeItem(GUEST_TASKS_KEY)
+        return
+      }
+
+      window.localStorage.setItem(GUEST_TASKS_KEY, JSON.stringify(nextTasks))
+    } catch {
+      // 端末の保存制限により、保存に失敗した場合は無視する
+    }
+  }
+
+  async function loadSupabaseTasks(currentUserId: string) {
+    const supabase = createClient()
+    const { data, error } = await supabase
+      .from('todos')
+      .select('*')
+      .eq('user_id', currentUserId)
+      .order('created_at', { ascending: false })
+
+    console.log('loadSupabaseTasks', { currentUserId, count: data?.length ?? 0, error: error?.message ?? null })
+
+    if (error) {
+      setError('データの読み込みに失敗しました')
+      return
+    }
+
+    const mappedTasks = (data ?? []).map((row) => {
+      const parsed = parseTaskFromDbTitle(row.title)
+      return {
+        id: row.id,
+        title: parsed.title,
+        situation: parsed.situation,
+        subtasks: parsed.subtasks.map((subtask) => ({
+          ...subtask,
+          id: subtask.id || row.id,
+          done: Boolean(row.is_completed) ? Boolean(subtask.done) : subtask.done,
+        })),
+      }
+    })
+
+    setTasks(mappedTasks)
+    persistLocalTasks([])
+  }
+
+  async function syncGuestTasksToSupabase(currentUserId: string) {
+    const localTasks = readLocalTasks()
+    console.log('syncGuestTasksToSupabase start', {
+      currentUserId,
+      localTaskCount: localTasks.length,
+      hasLocalData: localTasks.length > 0,
+    })
+
+    if (localTasks.length === 0) {
+      await loadSupabaseTasks(currentUserId)
+      return
+    }
+
+    const supabase = createClient()
+    const rows = localTasks.map((task) => ({
+      id: task.id,
+      title: serializeTaskForDb(task),
+      user_id: currentUserId,
+      is_completed: task.subtasks.length > 0 && task.subtasks.every((item) => item.done),
+    }))
+
+    const { data, error } = await supabase.from('todos').upsert(rows)
+    console.log('syncGuestTasksToSupabase result', { rowsCount: rows.length, data, error: error?.message ?? null })
+
+    if (error) {
+      setError('ゲストデータの同期に失敗しました')
+      return
+    }
+
+    persistLocalTasks([])
+    await loadSupabaseTasks(currentUserId)
+  }
+
+  useEffect(() => {
+    const supabase = createClient()
+
+    const syncAuthState = async () => {
+      const {
+        data: { session },
+        error,
+      } = await supabase.auth.getSession()
+
+      console.log('getSession result', {
+        hasSession: !!session,
+        userId: session?.user?.id ?? null,
+        email: session?.user?.email ?? null,
+        error: error?.message ?? null,
+      })
+
+      if (session?.user) {
+        setUserId(session.user.id)
+        setAuthReady(true)
+        await loadSupabaseTasks(session.user.id)
+        return
+      }
+
+      setUserId(null)
+      setAuthReady(true)
+      setTasks(readLocalTasks())
+    }
+
+    void syncAuthState()
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log('onAuthStateChange fired', {
+        event,
+        hasSession: !!session,
+        userId: session?.user?.id ?? null,
+        email: session?.user?.email ?? null,
+      })
+
+      if (session?.user) {
+        setUserId(session.user.id)
+        setAuthReady(true)
+        await syncGuestTasksToSupabase(session.user.id)
+        return
+      }
+
+      setUserId(null)
+      setAuthReady(true)
+      setTasks(readLocalTasks())
+    })
+
+    return () => {
+      subscription.unsubscribe()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!authReady) return
+
+    if (!isAuthenticated) {
+      persistLocalTasks(tasks)
+      return
+    }
+
+    if (typeof window !== 'undefined') {
+      window.localStorage.removeItem(GUEST_TASKS_KEY)
+    }
+  }, [tasks, authReady, isAuthenticated])
 
   function addTask(title: string, steps: DecomposedStep[], situation?: string) {
-    setTasks((current) => [
-      {
-        id: crypto.randomUUID(),
-        title,
-        situation,
-        subtasks: steps.map((step) => ({ ...step, id: crypto.randomUUID(), done: false })),
-      },
-      ...current,
-    ])
+    const nextTask: ParentTask = {
+      id: crypto.randomUUID(),
+      title,
+      situation,
+      subtasks: steps.map((step) => ({ ...step, id: crypto.randomUUID(), done: false })),
+    }
+
+    const nextTasks = [nextTask, ...tasks]
+    setTasks(nextTasks)
+
+    console.log('addTask called', {
+      isAuthenticated,
+      userId,
+      title,
+      taskId: nextTask.id,
+      subtaskCount: nextTask.subtasks.length,
+    })
+
+    if (isAuthenticated && userId) {
+      const supabase = createClient()
+      void supabase
+        .from('todos')
+        .insert({
+          id: nextTask.id,
+          user_id: userId,
+          title: serializeTaskForDb(nextTask),
+          is_completed: false,
+        })
+        .then(({ error }) => {
+          console.log('insert todo result', {
+            taskId: nextTask.id,
+            error: error?.message ?? null,
+          })
+        })
+    } else {
+      persistLocalTasks(nextTasks)
+    }
   }
 
   async function decomposeTask(title: string, answer?: string) {
@@ -253,22 +505,95 @@ export default function TaskDecomposer() {
   }
 
   function toggleSubtask(taskId: string, subtaskId: string) {
-    setTasks((current) =>
-      current.map((task) =>
-        task.id === taskId
-          ? {
-              ...task,
-              subtasks: task.subtasks.map((item) =>
-                item.id === subtaskId ? { ...item, done: !item.done } : item,
-              ),
-            }
-          : task,
-      ),
-    )
+    let nextDoneValue = false
+
+    const nextTasks = tasks.map((task) => {
+      if (task.id !== taskId) return task
+
+      const nextSubtasks = task.subtasks.map((item) =>
+        item.id === subtaskId ? { ...item, done: !item.done } : item,
+      )
+
+      nextDoneValue = nextSubtasks.every((item) => item.done)
+
+      return {
+        ...task,
+        subtasks: nextSubtasks,
+      }
+    })
+
+    setTasks(nextTasks)
+    console.log('toggleSubtask called', {
+      isAuthenticated,
+      userId,
+      taskId,
+      subtaskId,
+      nextDoneValue,
+    })
+
+    if (isAuthenticated && userId) {
+      const supabase = createClient()
+      const currentTask = tasks.find((task) => task.id === taskId)
+      if (!currentTask) {
+        return
+      }
+
+      const updatedTask: ParentTask = {
+        ...currentTask,
+        subtasks: currentTask.subtasks.map((item) =>
+          item.id === subtaskId ? { ...item, done: !item.done } : item,
+        ),
+      }
+
+      void supabase
+        .from('todos')
+        .update({
+          title: serializeTaskForDb(updatedTask),
+          is_completed: updatedTask.subtasks.length > 0 && updatedTask.subtasks.every((item) => item.done),
+        })
+        .eq('id', taskId)
+        .then(({ error }) => {
+          console.log('update todo result', {
+            taskId,
+            nextDoneValue,
+            error: error?.message ?? null,
+          })
+        })
+    } else {
+      persistLocalTasks(nextTasks)
+    }
   }
+
+  async function deleteTask(taskId: string) {
+    const nextTasks = tasks.filter((task) => task.id !== taskId)
+    setTasks(nextTasks)
+    console.log('deleteTask called', { isAuthenticated, userId, taskId })
+
+    if (!isAuthenticated || !userId) {
+      persistLocalTasks(nextTasks)
+      return
+    }
+
+    const supabase = createClient()
+    const { error } = await supabase.from('todos').delete().eq('id', taskId)
+    console.log('delete todo result', { taskId, error: error?.message ?? null })
+    if (error) {
+      setError('削除に失敗しました')
+    }
+  }
+
+  useEffect(() => {
+    if (tasks.length > 0 && draft === '') {
+      setDraft('')
+    }
+  }, [tasks.length, draft])
 
   return (
     <div className="flex flex-col gap-4 pb-16">
+      <div className="rounded-2xl border border-orange-100 bg-orange-50 px-3 py-2 text-sm font-medium text-orange-700">
+        {isAuthenticated ? 'ログイン済み（Supabase に保存中）' : 'ゲスト利用中（端末にのみ保存）'}
+      </div>
+
       <form
         onSubmit={handleSubmit}
         className="sticky top-0 z-10 rounded-3xl border border-orange-100 bg-white/90 p-4 shadow-sm backdrop-blur-md sm:p-5"
@@ -319,7 +644,7 @@ export default function TaskDecomposer() {
       ) : null}
 
       {tasks.map((task) => (
-        <ParentTaskCard key={task.id} task={task} onToggle={toggleSubtask} />
+        <ParentTaskCard key={task.id} task={task} onToggle={toggleSubtask} onDelete={deleteTask} />
       ))}
 
       {modalOpen && analysis ? (
