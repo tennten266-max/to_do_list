@@ -269,6 +269,7 @@ function TaskCardSkeleton() {
 
 export default function TaskDecomposer() {
   const [draft, setDraft] = useState('')
+  const [taskSearch, setTaskSearch] = useState('')
   const [pendingTitle, setPendingTitle] = useState('')
   const [pendingHistory, setPendingHistory] = useState<ClarificationExchange[]>([])
   const [analysis, setAnalysis] = useState<TaskAnalysis | null>(null)
@@ -280,6 +281,22 @@ export default function TaskDecomposer() {
   const [authReady, setAuthReady] = useState(false)
 
   const isAuthenticated = Boolean(userId)
+  const normalizedTaskSearch = taskSearch.trim().toLocaleLowerCase()
+  const filteredTasks = normalizedTaskSearch
+    ? tasks.filter((task) => {
+        const searchText = [
+          task.title,
+          task.summary,
+          task.situation,
+          ...task.subtasks.map((subtask) => subtask.action),
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLocaleLowerCase()
+
+        return searchText.includes(normalizedTaskSearch)
+      })
+    : tasks
 
   function readLocalTasks(): ParentTask[] {
     if (typeof window === 'undefined') return []
@@ -728,6 +745,22 @@ export default function TaskDecomposer() {
         ) : null}
       </form>
 
+      {tasks.length > 0 ? (
+        <div className="rounded-3xl border border-orange-100 bg-white p-4 shadow-sm sm:p-5">
+          <label htmlFor="task-search" className="mb-2 block text-sm font-semibold text-stone-700">
+            タスクを検索
+          </label>
+          <input
+            id="task-search"
+            type="search"
+            value={taskSearch}
+            onChange={(event) => setTaskSearch(event.target.value)}
+            placeholder="元のタスク名、状況、子タスク名など"
+            className="min-h-11 w-full rounded-2xl border border-orange-200 bg-orange-50/70 px-4 text-base text-stone-800 outline-none focus-visible:ring-2 focus-visible:ring-orange-400"
+          />
+        </div>
+      ) : null}
+
       {loading ? <TaskCardSkeleton /> : null}
 
       {tasks.length === 0 && !loading ? (
@@ -736,7 +769,13 @@ export default function TaskDecomposer() {
         </p>
       ) : null}
 
-      {tasks.map((task) => (
+      {tasks.length > 0 && filteredTasks.length === 0 ? (
+        <p className="rounded-3xl border border-dashed border-orange-200 bg-white/70 px-5 py-10 text-center text-sm text-stone-500">
+          「{taskSearch.trim()}」に一致するタスクはありません。
+        </p>
+      ) : null}
+
+      {filteredTasks.map((task) => (
         <ParentTaskCard key={task.id} task={task} onToggle={toggleSubtask} onDelete={deleteTask} />
       ))}
 
