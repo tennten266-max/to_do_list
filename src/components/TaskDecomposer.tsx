@@ -328,75 +328,73 @@ export default function TaskDecomposer() {
     }
   }
 
-  async function loadSupabaseTasks(currentUserId: string) {
-    const supabase = createClient()
-    const { data, error } = await supabase
-      .from('todos')
-      .select('*')
-      .eq('user_id', currentUserId)
-      .order('created_at', { ascending: false })
-
-    console.log('loadSupabaseTasks', { currentUserId, count: data?.length ?? 0, error: error?.message ?? null })
-
-    if (error) {
-      setError('データの読み込みに失敗しました')
-      return
-    }
-
-    const mappedTasks = (data ?? []).map((row) => {
-      const parsed = parseTaskFromDbTitle(row.title)
-      return {
-        id: row.id,
-        title: parsed.title,
-        situation: parsed.situation,
-        summary: parsed.summary,
-        subtasks: parsed.subtasks.map((subtask) => ({
-          ...subtask,
-          id: subtask.id || row.id,
-          done: Boolean(row.is_completed) ? Boolean(subtask.done) : subtask.done,
-        })),
-      }
-    })
-
-    setTasks(mappedTasks)
-    persistLocalTasks([])
-  }
-
-  async function syncGuestTasksToSupabase(currentUserId: string) {
-    const localTasks = readLocalTasks()
-    console.log('syncGuestTasksToSupabase start', {
-      currentUserId,
-      localTaskCount: localTasks.length,
-      hasLocalData: localTasks.length > 0,
-    })
-
-    if (localTasks.length === 0) {
-      await loadSupabaseTasks(currentUserId)
-      return
-    }
-
-    const supabase = createClient()
-    const rows = localTasks.map((task) => ({
-      id: task.id,
-      title: serializeTaskForDb(task),
-      user_id: currentUserId,
-      is_completed: task.subtasks.length > 0 && task.subtasks.every((item) => item.done),
-    }))
-
-    const { data, error } = await supabase.from('todos').upsert(rows)
-    console.log('syncGuestTasksToSupabase result', { rowsCount: rows.length, data, error: error?.message ?? null })
-
-    if (error) {
-      setError('ゲストデータの同期に失敗しました')
-      return
-    }
-
-    persistLocalTasks([])
-    await loadSupabaseTasks(currentUserId)
-  }
-
   useEffect(() => {
     const supabase = createClient()
+
+    async function loadSupabaseTasks(currentUserId: string) {
+      const { data, error } = await supabase
+        .from('todos')
+        .select('*')
+        .eq('user_id', currentUserId)
+        .order('created_at', { ascending: false })
+
+      console.log('loadSupabaseTasks', { currentUserId, count: data?.length ?? 0, error: error?.message ?? null })
+
+      if (error) {
+        setError('データの読み込みに失敗しました')
+        return
+      }
+
+      const mappedTasks = (data ?? []).map((row) => {
+        const parsed = parseTaskFromDbTitle(row.title)
+        return {
+          id: row.id,
+          title: parsed.title,
+          situation: parsed.situation,
+          summary: parsed.summary,
+          subtasks: parsed.subtasks.map((subtask) => ({
+            ...subtask,
+            id: subtask.id || row.id,
+            done: Boolean(row.is_completed) ? Boolean(subtask.done) : subtask.done,
+          })),
+        }
+      })
+
+      setTasks(mappedTasks)
+      persistLocalTasks([])
+    }
+
+    async function syncGuestTasksToSupabase(currentUserId: string) {
+      const localTasks = readLocalTasks()
+      console.log('syncGuestTasksToSupabase start', {
+        currentUserId,
+        localTaskCount: localTasks.length,
+        hasLocalData: localTasks.length > 0,
+      })
+
+      if (localTasks.length === 0) {
+        await loadSupabaseTasks(currentUserId)
+        return
+      }
+
+      const rows = localTasks.map((task) => ({
+        id: task.id,
+        title: serializeTaskForDb(task),
+        user_id: currentUserId,
+        is_completed: task.subtasks.length > 0 && task.subtasks.every((item) => item.done),
+      }))
+
+      const { data, error } = await supabase.from('todos').upsert(rows)
+      console.log('syncGuestTasksToSupabase result', { rowsCount: rows.length, data, error: error?.message ?? null })
+
+      if (error) {
+        setError('ゲストデータの同期に失敗しました')
+        return
+      }
+
+      persistLocalTasks([])
+      await loadSupabaseTasks(currentUserId)
+    }
 
     const syncAuthState = async () => {
       const {
@@ -691,12 +689,6 @@ export default function TaskDecomposer() {
       setError('削除に失敗しました')
     }
   }
-
-  useEffect(() => {
-    if (tasks.length > 0 && draft === '') {
-      setDraft('')
-    }
-  }, [tasks.length, draft])
 
   return (
     <div className="flex flex-col gap-4 pb-16">
