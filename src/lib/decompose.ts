@@ -13,7 +13,7 @@ export type Subtask = DecomposedStep & {
 }
 
 const MINUTES_MIN = 1
-const MINUTES_MAX = 15
+const MINUTES_MAX = 24 * 60
 const STEPS_MIN = 3
 const STEPS_MAX = 5
 

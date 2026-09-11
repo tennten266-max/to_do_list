@@ -68,11 +68,13 @@ function parseTaskFromDbTitle(rawTitle: string): { title: string; situation?: st
 function SituationModal({
   task,
   analysis,
+  loading,
   onSelect,
   onClose,
 }: {
   task: string
   analysis: TaskAnalysis
+  loading: boolean
   onSelect: (answer: string) => void
   onClose: () => void
 }) {
@@ -102,11 +104,18 @@ function SituationModal({
         <p className="mt-2 text-sm text-stone-500">
           「{task}」について、いちばん近い状況を選んでください。
         </p>
+        {loading ? (
+          <div className="mt-4 flex items-center gap-2 rounded-2xl bg-orange-50 px-3 py-2 text-sm font-semibold text-orange-700" role="status" aria-live="polite">
+            <span className="size-4 animate-spin rounded-full border-2 border-orange-200 border-t-orange-500" aria-hidden="true" />
+            回答を反映しています…
+          </div>
+        ) : null}
         <div className="mt-5 grid grid-cols-1 gap-2">
           {analysis.options.map((option) => (
             <button
               key={option}
               type="button"
+              disabled={loading}
               onClick={() => {
                 if (option === 'その他') {
                   setOtherMode(true)
@@ -131,12 +140,13 @@ function SituationModal({
               onChange={(event) => setOtherInput(event.target.value)}
               rows={3}
               autoFocus
+              disabled={loading}
               className="w-full resize-none rounded-2xl border border-orange-200 bg-orange-50/70 px-4 py-3 text-sm text-stone-800 outline-none focus-visible:ring-2 focus-visible:ring-orange-400"
               placeholder="具体的な状況を入力"
             />
             <button
               type="button"
-              disabled={!otherInput.trim()}
+              disabled={!otherInput.trim() || loading}
               onClick={() => onSelect(otherInput.trim())}
               className="w-full rounded-2xl bg-orange-500 px-4 py-3 font-semibold text-white transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-50"
             >
@@ -642,6 +652,8 @@ export default function TaskDecomposer() {
   }
 
   async function handleSelectSituation(answer: string) {
+    if (loading) return
+
     const title = pendingTitle
     const question = analysis?.question ?? ''
     const nextHistory = [...pendingHistory, { question, answer }]
@@ -861,6 +873,7 @@ export default function TaskDecomposer() {
           key={analysis.question}
           task={pendingTitle}
           analysis={analysis}
+          loading={loading}
           onSelect={handleSelectSituation}
           onClose={() => {
             setModalOpen(false)
