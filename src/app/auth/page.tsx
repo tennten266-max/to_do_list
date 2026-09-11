@@ -1,9 +1,11 @@
 'use client'
 
 import { FormEvent, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 
 export default function AuthPage() {
+  const router = useRouter()
   const [mode, setMode] = useState<'login' | 'signup'>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -39,7 +41,7 @@ export default function AuthPage() {
 
       if (error) throw error
 
-      window.location.href = '/'
+      router.push('/')
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : '認証に失敗しました')
     } finally {

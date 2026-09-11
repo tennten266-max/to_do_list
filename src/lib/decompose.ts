@@ -29,7 +29,7 @@ export function parseModelJson(content: string): unknown {
   return JSON.parse(fenced ? fenced[1] : trimmed)
 }
 
-export function normalizeSteps(raw: unknown): DecomposedStep[] {
+function normalizeStepsWithRange(raw: unknown, stepsMin: number, stepsMax: number): DecomposedStep[] {
   const list = Array.isArray(raw)
     ? raw
     : raw && typeof raw === 'object'
@@ -45,9 +45,17 @@ export function normalizeSteps(raw: unknown): DecomposedStep[] {
     minutes: Math.min(MINUTES_MAX, Math.max(MINUTES_MIN, Math.round(step.minutes))),
   }))
 
-  if (steps.length < STEPS_MIN || steps.length > STEPS_MAX) {
-    throw new Error('ステップ数は3〜5個である必要があります')
+  if (steps.length < stepsMin || steps.length > stepsMax) {
+    throw new Error(`ステップ数は${stepsMin}〜${stepsMax}個である必要があります`)
   }
 
   return steps
+}
+
+export function normalizeSteps(raw: unknown): DecomposedStep[] {
+  return normalizeStepsWithRange(raw, STEPS_MIN, STEPS_MAX)
+}
+
+export function normalizeSubtaskSteps(raw: unknown): DecomposedStep[] {
+  return normalizeStepsWithRange(raw, 2, STEPS_MAX)
 }

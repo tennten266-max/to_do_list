@@ -1,10 +1,12 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import TaskDecomposer from '@/components/TaskDecomposer'
 
 export default function HomePage() {
+  const router = useRouter()
   const [helpOpen, setHelpOpen] = useState(false)
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [userEmail, setUserEmail] = useState('')
@@ -43,7 +45,7 @@ export default function HomePage() {
       return
     }
 
-    window.location.href = '/auth'
+    router.push('/auth')
   }
 
   return (

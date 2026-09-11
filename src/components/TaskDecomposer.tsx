@@ -164,10 +164,14 @@ function ParentTaskCard({
   task,
   onToggle,
   onDelete,
+  onRedecompose,
+  redecomposingSubtaskId,
 }: {
   task: ParentTask
   onToggle: (taskId: string, subtaskId: string) => void
   onDelete: (taskId: string) => void
+  onRedecompose: (taskId: string, subtaskId: string) => void
+  redecomposingSubtaskId: string | null
 }) {
   const doneCount = task.subtasks.filter((item) => item.done).length
   const total = task.subtasks.length
@@ -215,32 +219,43 @@ function ParentTaskCard({
       <ul className="flex flex-col gap-2">
         {task.subtasks.map((item) => (
           <li key={item.id}>
-            <label
-              className={`flex cursor-pointer items-start gap-3 rounded-2xl border px-3 py-3 ${
+            <div
+              className={`flex items-start gap-3 rounded-2xl border px-3 py-3 ${
                 item.done
                   ? 'border-emerald-100 bg-emerald-50'
                   : 'border-orange-100 bg-orange-50/60 hover:border-orange-300'
               }`}
             >
-              <input
-                type="checkbox"
-                checked={item.done}
-                onChange={() => onToggle(task.id, item.id)}
-                className="mt-0.5 size-5 shrink-0 accent-emerald-600"
-              />
-              <span className="min-w-0 flex-1">
-                <span className="mb-1 inline-flex rounded-full bg-amber-400 px-2 py-0.5 text-[11px] font-semibold text-amber-950">
-                  {item.minutes}分
+              <label htmlFor={`subtask-${task.id}-${item.id}`} className="flex min-w-0 flex-1 cursor-pointer items-start gap-3">
+                <input
+                  id={`subtask-${task.id}-${item.id}`}
+                  type="checkbox"
+                  checked={item.done}
+                  onChange={() => onToggle(task.id, item.id)}
+                  className="mt-0.5 size-5 shrink-0 accent-emerald-600"
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="mb-1 inline-flex rounded-full bg-amber-400 px-2 py-0.5 text-[11px] font-semibold text-amber-950">
+                    {item.minutes}分
+                  </span>
+                  <span
+                    className={`mt-1 block text-sm leading-6 ${
+                      item.done ? 'text-emerald-700/70 line-through' : 'text-stone-800'
+                    }`}
+                  >
+                    {item.action}
+                  </span>
                 </span>
-                <span
-                  className={`mt-1 block text-sm leading-6 ${
-                    item.done ? 'text-emerald-700/70 line-through' : 'text-stone-800'
-                  }`}
-                >
-                  {item.action}
-                </span>
-              </span>
-            </label>
+              </label>
+              <button
+                type="button"
+                onClick={() => onRedecompose(task.id, item.id)}
+                disabled={item.done || redecomposingSubtaskId === item.id}
+                className="mt-1 shrink-0 rounded-xl border border-orange-200 bg-white px-2 py-1 text-[11px] font-semibold text-orange-700 transition hover:border-orange-400 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {redecomposingSubtaskId === item.id ? '分解中' : item.done ? '完了済み' : 'さらに分解'}
+              </button>
+            </div>
           </li>
         ))}
       </ul>
@@ -275,6 +290,7 @@ export default function TaskDecomposer() {
   const [analysis, setAnalysis] = useState<TaskAnalysis | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
   const [tasks, setTasks] = useState<ParentTask[]>([])
+  const [redecomposingSubtaskId, setRedecomposingSubtaskId] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [userId, setUserId] = useState<string | null>(null)
@@ -528,6 +544,68 @@ export default function TaskDecomposer() {
     }
   }
 
+  async function redecomposeSubtask(taskId: string, subtaskId: string) {
+    if (redecomposingSubtaskId) return
+
+    const parentTask = tasks.find((task) => task.id === taskId)
+    const targetSubtask = parentTask?.subtasks.find((subtask) => subtask.id === subtaskId)
+    if (!parentTask || !targetSubtask) return
+
+    setRedecomposingSubtaskId(subtaskId)
+    setError('')
+    try {
+      const response = await fetch('/api/redecompose-subtask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: parentTask.title,
+          summary: parentTask.summary,
+          situation: parentTask.situation,
+          subtask: {
+            action: targetSubtask.action,
+            minutes: targetSubtask.minutes,
+          },
+        }),
+      })
+      const steps = await readApiResponse<DecomposedStep[]>(response)
+      const replacement = steps.map((step) => ({
+        ...step,
+        id: crypto.randomUUID(),
+        done: false,
+      }))
+      const targetIndex = parentTask.subtasks.findIndex((subtask) => subtask.id === subtaskId)
+      if (targetIndex < 0) return
+
+      const updatedTask: ParentTask = {
+        ...parentTask,
+        subtasks: [
+          ...parentTask.subtasks.slice(0, targetIndex),
+          ...replacement,
+          ...parentTask.subtasks.slice(targetIndex + 1),
+        ],
+      }
+      const nextTasks = tasks.map((task) => (task.id === taskId ? updatedTask : task))
+      setTasks(nextTasks)
+
+      if (isAuthenticated && userId) {
+        const supabase = createClient()
+        void supabase
+          .from('todos')
+          .update({
+            title: serializeTaskForDb(updatedTask),
+            is_completed: updatedTask.subtasks.length > 0 && updatedTask.subtasks.every((item) => item.done),
+          })
+          .eq('id', taskId)
+      } else {
+        persistLocalTasks(nextTasks)
+      }
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : '子タスクの再分解に失敗しました')
+    } finally {
+      setRedecomposingSubtaskId(null)
+    }
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const title = draft.trim()
@@ -768,7 +846,14 @@ export default function TaskDecomposer() {
       ) : null}
 
       {filteredTasks.map((task) => (
-        <ParentTaskCard key={task.id} task={task} onToggle={toggleSubtask} onDelete={deleteTask} />
+        <ParentTaskCard
+          key={task.id}
+          task={task}
+          onToggle={toggleSubtask}
+          onDelete={deleteTask}
+          onRedecompose={redecomposeSubtask}
+          redecomposingSubtaskId={redecomposingSubtaskId}
+        />
       ))}
 
       {modalOpen && analysis ? (
