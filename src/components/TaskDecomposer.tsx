@@ -11,22 +11,32 @@ type ParentTask = {
   id: string
   title: string
   situation?: string
+  summary?: string
   subtasks: Subtask[]
 }
+
+type ClarificationExchange = {
+  question: string
+  answer: string
+}
+
+const MAX_FOLLOW_UP_QUESTIONS = 3
 
 function serializeTaskForDb(task: ParentTask) {
   return JSON.stringify({
     title: task.title,
     situation: task.situation ?? null,
+    summary: task.summary ?? null,
     subtasks: task.subtasks,
   })
 }
 
-function parseTaskFromDbTitle(rawTitle: string): { title: string; situation?: string; subtasks: Subtask[] } {
+function parseTaskFromDbTitle(rawTitle: string): { title: string; situation?: string; summary?: string; subtasks: Subtask[] } {
   try {
     const parsed = JSON.parse(rawTitle) as {
       title?: string
       situation?: string | null
+      summary?: string | null
       subtasks?: Subtask[]
     }
 
@@ -34,6 +44,7 @@ function parseTaskFromDbTitle(rawTitle: string): { title: string; situation?: st
       return {
         title: typeof parsed.title === 'string' ? parsed.title : rawTitle,
         situation: typeof parsed.situation === 'string' ? parsed.situation : undefined,
+        summary: typeof parsed.summary === 'string' ? parsed.summary : undefined,
         subtasks: parsed.subtasks,
       }
     }
@@ -65,6 +76,9 @@ function SituationModal({
   onSelect: (answer: string) => void
   onClose: () => void
 }) {
+  const [otherInput, setOtherInput] = useState('')
+  const [otherMode, setOtherMode] = useState(false)
+
   if (!analysis.needsClarification || !analysis.question || !analysis.options) return null
 
   return (
@@ -93,13 +107,43 @@ function SituationModal({
             <button
               key={option}
               type="button"
-              onClick={() => onSelect(option)}
+              onClick={() => {
+                if (option === 'その他') {
+                  setOtherMode(true)
+                  return
+                }
+                onSelect(option)
+              }}
               className="rounded-2xl border border-orange-100 bg-orange-50 px-4 py-3 text-left transition hover:border-orange-400 hover:bg-amber-50"
             >
               <span className="block font-semibold text-stone-800">{option}</span>
             </button>
           ))}
         </div>
+        {otherMode ? (
+          <div className="mt-4 space-y-2">
+            <label htmlFor="other-answer" className="block text-sm font-semibold text-stone-700">
+              回答を入力してください
+            </label>
+            <textarea
+              id="other-answer"
+              value={otherInput}
+              onChange={(event) => setOtherInput(event.target.value)}
+              rows={3}
+              autoFocus
+              className="w-full resize-none rounded-2xl border border-orange-200 bg-orange-50/70 px-4 py-3 text-sm text-stone-800 outline-none focus-visible:ring-2 focus-visible:ring-orange-400"
+              placeholder="具体的な状況を入力"
+            />
+            <button
+              type="button"
+              disabled={!otherInput.trim()}
+              onClick={() => onSelect(otherInput.trim())}
+              className="w-full rounded-2xl bg-orange-500 px-4 py-3 font-semibold text-white transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              この回答で進む
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   )
@@ -135,8 +179,7 @@ function ParentTaskCard({
       <header className="mb-3 flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-xs font-semibold tracking-wide text-orange-400 uppercase">親タスク</p>
-          <h2 className="mt-1 text-lg font-semibold tracking-tight text-stone-800">{task.title}</h2>
-          {task.situation ? <p className="mt-1 text-sm text-stone-500">{task.situation}</p> : null}
+          <h2 className="mt-1 text-lg font-semibold tracking-tight text-stone-800">{task.summary ?? task.title}</h2>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <p
@@ -227,6 +270,7 @@ function TaskCardSkeleton() {
 export default function TaskDecomposer() {
   const [draft, setDraft] = useState('')
   const [pendingTitle, setPendingTitle] = useState('')
+  const [pendingHistory, setPendingHistory] = useState<ClarificationExchange[]>([])
   const [analysis, setAnalysis] = useState<TaskAnalysis | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
   const [tasks, setTasks] = useState<ParentTask[]>([])
@@ -288,6 +332,7 @@ export default function TaskDecomposer() {
         id: row.id,
         title: parsed.title,
         situation: parsed.situation,
+        summary: parsed.summary,
         subtasks: parsed.subtasks.map((subtask) => ({
           ...subtask,
           id: subtask.id || row.id,
@@ -403,11 +448,12 @@ export default function TaskDecomposer() {
     }
   }, [tasks, authReady, isAuthenticated])
 
-  function addTask(title: string, steps: DecomposedStep[], situation?: string) {
+  function addTask(title: string, steps: DecomposedStep[], situation?: string, summary?: string) {
     const nextTask: ParentTask = {
       id: crypto.randomUUID(),
       title,
       situation,
+      summary: summary || title,
       subtasks: steps.map((step) => ({ ...step, id: crypto.randomUUID(), done: false })),
     }
 
@@ -443,14 +489,28 @@ export default function TaskDecomposer() {
     }
   }
 
-  async function decomposeTask(title: string, answer?: string) {
+  async function decomposeTask(title: string, answer?: string, summary?: string) {
     const response = await fetch('/api/decompose-task', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ task: title, ...(answer ? { answer } : {}) }),
     })
     const steps = await readApiResponse<DecomposedStep[]>(response)
-    addTask(title, steps, answer)
+    addTask(title, steps, answer, summary)
+  }
+
+  async function summarizeTask(title: string, historyContext: string): Promise<string> {
+    try {
+      const response = await fetch('/api/summarize-task', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task: title, history: historyContext }),
+      })
+      const result = await readApiResponse<{ summary: string }>(response)
+      return result.summary.trim() || title
+    } catch {
+      return title
+    }
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -474,6 +534,7 @@ export default function TaskDecomposer() {
       const result = await readApiResponse<TaskAnalysis>(response)
       if (result.needsClarification) {
         setPendingTitle(title)
+        setPendingHistory([])
         setAnalysis(result)
         setModalOpen(true)
         setLoading(false)
@@ -489,14 +550,46 @@ export default function TaskDecomposer() {
 
   async function handleSelectSituation(answer: string) {
     const title = pendingTitle
-    setModalOpen(false)
-    setAnalysis(null)
-    setDraft('')
-    setPendingTitle('')
+    const question = analysis?.question ?? ''
+    const nextHistory = [...pendingHistory, { question, answer }]
+    const historyContext = nextHistory
+      .map((exchange, index) => `質問${index + 1}: ${exchange.question}\n回答${index + 1}: ${exchange.answer}`)
+      .join('\n')
     setLoading(true)
     setError('')
     try {
-      await decomposeTask(title, answer)
+      const response = await fetch('/api/analyze-task', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task: title, answer: historyContext }),
+      })
+      const result = await readApiResponse<TaskAnalysis>(response)
+
+      if (result.needsClarification) {
+        if (nextHistory.length <= MAX_FOLLOW_UP_QUESTIONS) {
+          setPendingHistory(nextHistory)
+          setAnalysis(result)
+          setModalOpen(true)
+          return
+        }
+
+        setModalOpen(false)
+        setAnalysis(null)
+        setDraft('')
+        setPendingTitle('')
+        setPendingHistory([])
+        const summary = await summarizeTask(title, historyContext)
+        await decomposeTask(title, historyContext, summary)
+        return
+      }
+
+      setModalOpen(false)
+      setAnalysis(null)
+      setDraft('')
+      setPendingTitle('')
+      setPendingHistory([])
+      const summary = await summarizeTask(title, historyContext)
+      await decomposeTask(title, historyContext, summary)
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'タスクの追加に失敗しました')
     } finally {
@@ -639,7 +732,7 @@ export default function TaskDecomposer() {
 
       {tasks.length === 0 && !loading ? (
         <p className="rounded-3xl border border-dashed border-orange-200 bg-white/70 px-5 py-10 text-center text-sm text-stone-500">
-          「就活する」のまま追加すると、今の状況を4択で聞けます。
+          「就活する」のまま追加すると、今の状況を4択＋その他で聞けます。
         </p>
       ) : null}
 
@@ -649,6 +742,7 @@ export default function TaskDecomposer() {
 
       {modalOpen && analysis ? (
         <SituationModal
+          key={analysis.question}
           task={pendingTitle}
           analysis={analysis}
           onSelect={handleSelectSituation}
@@ -656,6 +750,7 @@ export default function TaskDecomposer() {
             setModalOpen(false)
             setAnalysis(null)
             setPendingTitle('')
+            setPendingHistory([])
           }}
         />
       ) : null}

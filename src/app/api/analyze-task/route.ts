@@ -5,11 +5,12 @@ import { parseModelJson } from '@/lib/decompose'
 
 export const runtime = 'nodejs'
 
-const SYSTEM_PROMPT = `あなたはタスク整理の専門家です。ユーザーのタスク名を読み、具体的な行動に落とし込むために状況確認が必要か判定してください。
+const SYSTEM_PROMPT = `あなたはタスク整理の専門家です。ユーザーのタスク名と、これまでの回答を読み、具体的な行動に落とし込むために追加の状況確認が必要か判定してください。
 
 ルール:
 - 「就活する」「勉強する」のように目的だけで、最初の行動や対象が不明な場合は needsClarification を true にする
-- 質問が必要な場合は、状況を最も分けられる1つの質問と、ちょうど4つの短い選択肢を作る
+- これまでの回答を踏まえても、対象・期限・場所・成果物などが不明で、今すぐ実行できる行動に落とせない場合は needsClarification を true にする
+- 質問が必要な場合は、状況を最も分けられる1つの質問と、ちょうど4つの短い選択肢を作る。「その他」は必ず含めず、システムが5つ目として追加する
 - 十分に具体的な場合は needsClarification を false にし、question と options は省略する
 - 説明文は出さず、次のJSONオブジェクトだけを返す
 質問が必要: {"needsClarification":true,"question":"質問文","options":["選択肢1","選択肢2","選択肢3","選択肢4"]}
@@ -17,12 +18,17 @@ const SYSTEM_PROMPT = `あなたはタスク整理の専門家です。ユーザ
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as { task?: unknown } | null
+    const body = (await request.json()) as { task?: unknown; answer?: unknown } | null
     if (!body || typeof body !== 'object') {
       return NextResponse.json({ error: 'リクエスト形式が不正です' }, { status: 400 })
     }
 
     const task = typeof body.task === 'string' ? body.task.trim() : ''
+    if (body.answer !== undefined && typeof body.answer !== 'string') {
+      return NextResponse.json({ error: '回答の形式が不正です' }, { status: 400 })
+    }
+
+    const answer = typeof body.answer === 'string' ? body.answer.trim() : ''
 
     if (!task) {
       return NextResponse.json({ error: 'タスクを入力してください' }, { status: 400 })
@@ -43,7 +49,7 @@ export async function POST(request: Request) {
       temperature: 0.2,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: task },
+        { role: 'user', content: answer ? `タスク: ${task}\nこれまでの回答: ${answer}` : `タスク: ${task}` },
       ],
       response_format: { type: 'json_object' },
     })

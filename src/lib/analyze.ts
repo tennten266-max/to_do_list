@@ -23,9 +23,11 @@ export function normalizeTaskAnalysis(raw: unknown): TaskAnalysis {
     ? analysis.options.filter((option): option is string => typeof option === 'string').map((option) => option.trim()).filter(Boolean)
     : []
 
-  if (!question || options.length !== 4) {
+  const optionsWithoutOther = options.filter((option) => option !== 'その他')
+
+  if (!question || optionsWithoutOther.length !== 4) {
     throw new Error('質問と4つの選択肢が必要です')
   }
 
-  return { needsClarification: true, question, options }
+  return { needsClarification: true, question, options: [...optionsWithoutOther, 'その他'] }
 }
