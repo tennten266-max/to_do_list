@@ -1,6 +1,7 @@
 import OpenAI from 'openai'
 import { NextResponse } from 'next/server'
 import { normalizeSubtaskSteps, parseModelJson } from '@/lib/decompose'
+import { enforceAIRateLimit } from '@/lib/rate-limit'
 
 export const runtime = 'nodejs'
 
@@ -39,6 +40,9 @@ const SYSTEM_PROMPT = `あなたはタスク分解の専門家です。親タス
 
 export async function POST(request: Request) {
   try {
+    const rateLimitResponse = await enforceAIRateLimit(request)
+    if (rateLimitResponse) return rateLimitResponse
+
     const body = (await request.json()) as {
       title?: unknown
       summary?: unknown

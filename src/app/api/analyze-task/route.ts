@@ -2,6 +2,7 @@ import OpenAI from 'openai'
 import { NextResponse } from 'next/server'
 import { normalizeTaskAnalysis } from '@/lib/analyze'
 import { parseModelJson } from '@/lib/decompose'
+import { enforceAIRateLimit } from '@/lib/rate-limit'
 
 export const runtime = 'nodejs'
 
@@ -18,6 +19,9 @@ const SYSTEM_PROMPT = `あなたはタスク整理の専門家です。ユーザ
 
 export async function POST(request: Request) {
   try {
+    const rateLimitResponse = await enforceAIRateLimit(request)
+    if (rateLimitResponse) return rateLimitResponse
+
     const body = (await request.json()) as { task?: unknown; answer?: unknown } | null
     if (!body || typeof body !== 'object') {
       return NextResponse.json({ error: 'リクエスト形式が不正です' }, { status: 400 })

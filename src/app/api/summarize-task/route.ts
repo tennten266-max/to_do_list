@@ -1,5 +1,6 @@
 import OpenAI from 'openai'
 import { NextResponse } from 'next/server'
+import { enforceAIRateLimit } from '@/lib/rate-limit'
 
 export const runtime = 'nodejs'
 
@@ -13,6 +14,9 @@ const SYSTEM_PROMPT = `あなたはタスク整理の専門家です。元のタ
 
 export async function POST(request: Request) {
   try {
+    const rateLimitResponse = await enforceAIRateLimit(request)
+    if (rateLimitResponse) return rateLimitResponse
+
     const body = (await request.json()) as { task?: unknown; history?: unknown } | null
     if (!body || typeof body !== 'object') {
       return NextResponse.json({ error: 'リクエスト形式が不正です' }, { status: 400 })

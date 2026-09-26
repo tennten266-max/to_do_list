@@ -176,12 +176,14 @@ function ParentTaskCard({
   onDelete,
   onRedecompose,
   redecomposingSubtaskId,
+  isSaving,
 }: {
   task: ParentTask
   onToggle: (taskId: string, subtaskId: string) => void
   onDelete: (taskId: string) => void
   onRedecompose: (taskId: string, subtaskId: string) => void
   redecomposingSubtaskId: string | null
+  isSaving: boolean
 }) {
   const doneCount = task.subtasks.filter((item) => item.done).length
   const total = task.subtasks.length
@@ -206,7 +208,8 @@ function ParentTaskCard({
           <button
             type="button"
             onClick={() => onDelete(task.id)}
-            className="rounded-full border border-stone-200 bg-white px-2.5 py-1 text-[11px] font-medium text-stone-600 transition hover:border-red-200 hover:text-red-600"
+            disabled={isSaving}
+            className="rounded-full border border-stone-200 bg-white px-2.5 py-1 text-[11px] font-medium text-stone-600 transition hover:border-red-200 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
           >
             削除
           </button>
@@ -241,6 +244,7 @@ function ParentTaskCard({
                   id={`subtask-${task.id}-${item.id}`}
                   type="checkbox"
                   checked={item.done}
+                  disabled={isSaving}
                   onChange={() => onToggle(task.id, item.id)}
                   className="mt-0.5 size-5 shrink-0 accent-emerald-600"
                 />
@@ -260,7 +264,7 @@ function ParentTaskCard({
               <button
                 type="button"
                 onClick={() => onRedecompose(task.id, item.id)}
-                disabled={item.done || redecomposingSubtaskId === item.id}
+                disabled={isSaving || item.done || redecomposingSubtaskId === item.id}
                 className="mt-1 shrink-0 rounded-xl border border-orange-200 bg-white px-2 py-1 text-[11px] font-semibold text-orange-700 transition hover:border-orange-400 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {redecomposingSubtaskId === item.id ? '分解中' : item.done ? '完了済み' : 'さらに分解'}
@@ -300,6 +304,7 @@ export default function TaskDecomposer() {
   const [analysis, setAnalysis] = useState<TaskAnalysis | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
   const [tasks, setTasks] = useState<ParentTask[]>([])
+  const [savingTaskIds, setSavingTaskIds] = useState<string[]>([])
   const [redecomposingSubtaskId, setRedecomposingSubtaskId] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -387,7 +392,6 @@ export default function TaskDecomposer() {
       })
 
       setTasks(mappedTasks)
-      persistLocalTasks([])
     }
 
     async function syncGuestTasksToSupabase(currentUserId: string) {
@@ -403,6 +407,8 @@ export default function TaskDecomposer() {
         return
       }
 
+      setTasks(localTasks)
+
       const rows = localTasks.map((task) => ({
         id: task.id,
         title: serializeTaskForDb(task),
@@ -410,10 +416,10 @@ export default function TaskDecomposer() {
         is_completed: task.subtasks.length > 0 && task.subtasks.every((item) => item.done),
       }))
 
-      const { data, error } = await supabase.from('todos').upsert(rows)
+      const { data, error } = await supabase.from('todos').upsert(rows).select('id')
       console.log('syncGuestTasksToSupabase result', { rowsCount: rows.length, data, error: error?.message ?? null })
 
-      if (error) {
+      if (error || !data || data.length !== rows.length) {
         setError('ゲストデータの同期に失敗しました')
         return
       }
@@ -438,7 +444,7 @@ export default function TaskDecomposer() {
       if (session?.user) {
         setUserId(session.user.id)
         setAuthReady(true)
-        await loadSupabaseTasks(session.user.id)
+        await syncGuestTasksToSupabase(session.user.id)
         return
       }
 
@@ -484,12 +490,9 @@ export default function TaskDecomposer() {
       return
     }
 
-    if (typeof window !== 'undefined') {
-      window.localStorage.removeItem(GUEST_TASKS_KEY)
-    }
   }, [tasks, authReady, isAuthenticated])
 
-  function addTask(title: string, steps: DecomposedStep[], situation?: string, summary?: string) {
+  async function addTask(title: string, steps: DecomposedStep[], situation?: string, summary?: string) {
     const nextTask: ParentTask = {
       id: crypto.randomUUID(),
       title,
@@ -498,20 +501,9 @@ export default function TaskDecomposer() {
       subtasks: steps.map((step) => ({ ...step, id: crypto.randomUUID(), done: false })),
     }
 
-    const nextTasks = [nextTask, ...tasks]
-    setTasks(nextTasks)
-
-    console.log('addTask called', {
-      isAuthenticated,
-      userId,
-      title,
-      taskId: nextTask.id,
-      subtaskCount: nextTask.subtasks.length,
-    })
-
     if (isAuthenticated && userId) {
       const supabase = createClient()
-      void supabase
+      const { data, error } = await supabase
         .from('todos')
         .insert({
           id: nextTask.id,
@@ -519,15 +511,17 @@ export default function TaskDecomposer() {
           title: serializeTaskForDb(nextTask),
           is_completed: false,
         })
-        .then(({ error }) => {
-          console.log('insert todo result', {
-            taskId: nextTask.id,
-            error: error?.message ?? null,
-          })
-        })
-    } else {
-      persistLocalTasks(nextTasks)
+        .select('id')
+        .single()
+
+      if (error || !data) {
+        throw new Error('タスクをクラウドに保存できませんでした。再試行してください。')
+      }
     }
+
+    const nextTasks = [nextTask, ...tasks]
+    setTasks(nextTasks)
+    if (!isAuthenticated || !userId) persistLocalTasks(nextTasks)
   }
 
   async function decomposeTask(title: string, answer?: string, summary?: string) {
@@ -555,13 +549,14 @@ export default function TaskDecomposer() {
   }
 
   async function redecomposeSubtask(taskId: string, subtaskId: string) {
-    if (redecomposingSubtaskId) return
+    if (redecomposingSubtaskId || savingTaskIds.includes(taskId)) return
 
     const parentTask = tasks.find((task) => task.id === taskId)
     const targetSubtask = parentTask?.subtasks.find((subtask) => subtask.id === subtaskId)
     if (!parentTask || !targetSubtask) return
 
     setRedecomposingSubtaskId(subtaskId)
+    setSavingTaskIds((current) => [...current, taskId])
     setError('')
     try {
       const response = await fetch('/api/redecompose-subtask', {
@@ -595,24 +590,31 @@ export default function TaskDecomposer() {
         ],
       }
       const nextTasks = tasks.map((task) => (task.id === taskId ? updatedTask : task))
-      setTasks(nextTasks)
 
       if (isAuthenticated && userId) {
         const supabase = createClient()
-        void supabase
+        const { data, error } = await supabase
           .from('todos')
           .update({
             title: serializeTaskForDb(updatedTask),
             is_completed: updatedTask.subtasks.length > 0 && updatedTask.subtasks.every((item) => item.done),
           })
           .eq('id', taskId)
+          .select('id')
+          .maybeSingle()
+
+        if (error || !data) {
+          throw new Error('クラウドへの保存に失敗しました。変更は反映されていません。')
+        }
       } else {
         persistLocalTasks(nextTasks)
       }
+      setTasks(nextTasks)
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : '子タスクの再分解に失敗しました')
     } finally {
       setRedecomposingSubtaskId(null)
+      setSavingTaskIds((current) => current.filter((id) => id !== taskId))
     }
   }
 
@@ -678,23 +680,23 @@ export default function TaskDecomposer() {
           return
         }
 
+        const summary = await summarizeTask(title, historyContext)
+        await decomposeTask(title, historyContext, summary)
         setModalOpen(false)
         setAnalysis(null)
         setDraft('')
         setPendingTitle('')
         setPendingHistory([])
-        const summary = await summarizeTask(title, historyContext)
-        await decomposeTask(title, historyContext, summary)
         return
       }
 
+      const summary = await summarizeTask(title, historyContext)
+      await decomposeTask(title, historyContext, summary)
       setModalOpen(false)
       setAnalysis(null)
       setDraft('')
       setPendingTitle('')
       setPendingHistory([])
-      const summary = await summarizeTask(title, historyContext)
-      await decomposeTask(title, historyContext, summary)
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'タスクの追加に失敗しました')
     } finally {
@@ -702,81 +704,76 @@ export default function TaskDecomposer() {
     }
   }
 
-  function toggleSubtask(taskId: string, subtaskId: string) {
-    let nextDoneValue = false
+  async function toggleSubtask(taskId: string, subtaskId: string) {
+    if (savingTaskIds.includes(taskId)) return
 
-    const nextTasks = tasks.map((task) => {
-      if (task.id !== taskId) return task
+    const currentTask = tasks.find((task) => task.id === taskId)
+    if (!currentTask || !currentTask.subtasks.some((item) => item.id === subtaskId)) return
 
-      const nextSubtasks = task.subtasks.map((item) =>
+    const updatedTask: ParentTask = {
+      ...currentTask,
+      subtasks: currentTask.subtasks.map((item) =>
         item.id === subtaskId ? { ...item, done: !item.done } : item,
-      )
-
-      nextDoneValue = nextSubtasks.every((item) => item.done)
-
-      return {
-        ...task,
-        subtasks: nextSubtasks,
-      }
-    })
-
-    setTasks(nextTasks)
-    console.log('toggleSubtask called', {
-      isAuthenticated,
-      userId,
-      taskId,
-      subtaskId,
-      nextDoneValue,
-    })
-
-    if (isAuthenticated && userId) {
-      const supabase = createClient()
-      const currentTask = tasks.find((task) => task.id === taskId)
-      if (!currentTask) {
-        return
-      }
-
-      const updatedTask: ParentTask = {
-        ...currentTask,
-        subtasks: currentTask.subtasks.map((item) =>
-          item.id === subtaskId ? { ...item, done: !item.done } : item,
-        ),
-      }
-
-      void supabase
-        .from('todos')
-        .update({
-          title: serializeTaskForDb(updatedTask),
-          is_completed: updatedTask.subtasks.length > 0 && updatedTask.subtasks.every((item) => item.done),
-        })
-        .eq('id', taskId)
-        .then(({ error }) => {
-          console.log('update todo result', {
-            taskId,
-            nextDoneValue,
-            error: error?.message ?? null,
-          })
-        })
-    } else {
-      persistLocalTasks(nextTasks)
+      ),
     }
-  }
+    const nextTasks = tasks.map((task) => task.id === taskId ? updatedTask : task)
 
-  async function deleteTask(taskId: string) {
-    const nextTasks = tasks.filter((task) => task.id !== taskId)
-    setTasks(nextTasks)
-    console.log('deleteTask called', { isAuthenticated, userId, taskId })
+    setError('')
+    if (isAuthenticated && userId) {
+      setSavingTaskIds((current) => [...current, taskId])
+      try {
+        const supabase = createClient()
+        const { data, error } = await supabase
+          .from('todos')
+          .update({
+            title: serializeTaskForDb(updatedTask),
+            is_completed: updatedTask.subtasks.length > 0 && updatedTask.subtasks.every((item) => item.done),
+          })
+          .eq('id', taskId)
+          .select('id')
+          .maybeSingle()
 
-    if (!isAuthenticated || !userId) {
-      persistLocalTasks(nextTasks)
+        if (error || !data) throw new Error()
+        setTasks(nextTasks)
+      } catch {
+        setError('完了状態をクラウドに保存できませんでした。変更は反映されていません。')
+      } finally {
+        setSavingTaskIds((current) => current.filter((id) => id !== taskId))
+      }
       return
     }
 
-    const supabase = createClient()
-    const { error } = await supabase.from('todos').delete().eq('id', taskId)
-    console.log('delete todo result', { taskId, error: error?.message ?? null })
-    if (error) {
-      setError('削除に失敗しました')
+    persistLocalTasks(nextTasks)
+    setTasks(nextTasks)
+  }
+
+  async function deleteTask(taskId: string) {
+    if (savingTaskIds.includes(taskId)) return
+
+    if (!isAuthenticated || !userId) {
+      const nextTasks = tasks.filter((task) => task.id !== taskId)
+      persistLocalTasks(nextTasks)
+      setTasks(nextTasks)
+      return
+    }
+
+    setError('')
+    setSavingTaskIds((current) => [...current, taskId])
+    try {
+      const supabase = createClient()
+      const { data, error } = await supabase
+        .from('todos')
+        .delete()
+        .eq('id', taskId)
+        .select('id')
+        .maybeSingle()
+
+      if (error || !data) throw new Error()
+      setTasks((current) => current.filter((task) => task.id !== taskId))
+    } catch {
+      setError('タスクをクラウドから削除できませんでした。変更は反映されていません。')
+    } finally {
+      setSavingTaskIds((current) => current.filter((id) => id !== taskId))
     }
   }
 
@@ -865,6 +862,7 @@ export default function TaskDecomposer() {
           onDelete={deleteTask}
           onRedecompose={redecomposeSubtask}
           redecomposingSubtaskId={redecomposingSubtaskId}
+          isSaving={savingTaskIds.includes(task.id)}
         />
       ))}
 
