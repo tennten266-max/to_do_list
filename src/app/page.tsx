@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import TaskDecomposer from '@/components/TaskDecomposer'
 
@@ -85,6 +86,12 @@ export default function HomePage() {
       </header>
 
       <TaskDecomposer />
+
+      <footer className="mt-8 border-t border-orange-200/70 pt-4 text-center text-sm text-stone-500">
+        <Link href="/contact" className="font-medium text-orange-700 underline-offset-4 hover:underline">
+          制作者へのお問い合わせ
+        </Link>
+      </footer>
 
       {helpOpen ? (
         <div className="fixed inset-0 z-50 flex items-end justify-center p-4 sm:items-center">
