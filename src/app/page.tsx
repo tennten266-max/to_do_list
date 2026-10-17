@@ -11,6 +11,9 @@ export default function HomePage() {
   const [helpOpen, setHelpOpen] = useState(false)
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [userEmail, setUserEmail] = useState('')
+  const [logoutDialogOpen, setLogoutDialogOpen] = useState(false)
+  const [isLoggingOut, setIsLoggingOut] = useState(false)
+  const [logoutError, setLogoutError] = useState('')
 
   useEffect(() => {
     const supabase = createClient()
@@ -37,16 +40,47 @@ export default function HomePage() {
     }
   }, [])
 
-  async function handleAuthAction() {
-    const supabase = createClient()
+  useEffect(() => {
+    if (!logoutDialogOpen) return
 
+    function handleDialogKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape' && !isLoggingOut) setLogoutDialogOpen(false)
+    }
+
+    window.addEventListener('keydown', handleDialogKeyDown)
+    return () => window.removeEventListener('keydown', handleDialogKeyDown)
+  }, [logoutDialogOpen, isLoggingOut])
+
+  function handleAuthAction() {
     if (isLoggedIn) {
-      await supabase.auth.signOut()
-      setIsLoggedIn(false)
+      setLogoutError('')
+      setLogoutDialogOpen(true)
       return
     }
 
     router.push('/auth')
+  }
+
+  async function confirmLogout() {
+    if (isLoggingOut) return
+
+    setIsLoggingOut(true)
+    setLogoutError('')
+    try {
+      const { error } = await createClient().auth.signOut()
+      if (error) {
+        setLogoutError('ログアウトに失敗しました。通信状況をご確認のうえ、もう一度お試しください。')
+        return
+      }
+
+      setIsLoggedIn(false)
+      setUserEmail('')
+      setLogoutDialogOpen(false)
+    } catch {
+      setLogoutError('ログアウトに失敗しました。通信状況をご確認のうえ、もう一度お試しください。')
+    } finally {
+      setIsLoggingOut(false)
+    }
   }
 
   return (
@@ -62,12 +96,18 @@ export default function HomePage() {
             >
               使い方
             </button>
+            <Link
+              href="/contact"
+              className="rounded-full border border-orange-200 bg-orange-50 px-2.5 py-1 text-[11px] font-semibold text-orange-700 transition hover:border-orange-300 hover:bg-orange-100"
+            >
+              お問い合わせ
+            </Link>
           </div>
           <h1 className="mt-1 text-2xl font-semibold tracking-tight text-stone-800 sm:text-3xl">
             to doを細分化する
           </h1>
           <p className="mt-2 text-sm text-stone-500">
-            「就活する」のようにアバウトな入力から、状況の4択から具体的なToDoに分けます。
+            「就活する」のようにアバウトな入力と、質問への回答から具体的なToDoに分けます。
           </p>
         </div>
 
@@ -86,12 +126,6 @@ export default function HomePage() {
       </header>
 
       <TaskDecomposer />
-
-      <footer className="mt-8 border-t border-orange-200/70 pt-4 text-center text-sm text-stone-500">
-        <Link href="/contact" className="font-medium text-orange-700 underline-offset-4 hover:underline">
-          制作者へのお問い合わせ
-        </Link>
-      </footer>
 
       {helpOpen ? (
         <div className="fixed inset-0 z-50 flex items-end justify-center p-4 sm:items-center">
@@ -131,6 +165,56 @@ export default function HomePage() {
               閉じる
             </button>
           </div>
+        </div>
+      ) : null}
+
+      {logoutDialogOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <button
+            type="button"
+            aria-label="ログアウト確認を閉じる"
+            className="absolute inset-0 bg-stone-950/40 backdrop-blur-sm"
+            disabled={isLoggingOut}
+            onClick={() => setLogoutDialogOpen(false)}
+          />
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="logout-title"
+            aria-describedby="logout-description"
+            className="relative w-full max-w-sm rounded-3xl border border-orange-100 bg-white p-5 shadow-2xl sm:p-6"
+          >
+            <h2 id="logout-title" className="text-xl font-semibold tracking-tight text-stone-800">
+              ログアウトしますか？
+            </h2>
+            <p id="logout-description" className="mt-2 text-sm leading-6 text-stone-600">
+              ログアウトしてもよろしいですか？
+            </p>
+            {logoutError ? (
+              <p role="alert" className="mt-4 rounded-2xl bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+                {logoutError}
+              </p>
+            ) : null}
+            <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                autoFocus
+                disabled={isLoggingOut}
+                onClick={() => setLogoutDialogOpen(false)}
+                className="min-h-11 rounded-2xl border border-stone-200 bg-white px-4 py-2.5 text-sm font-semibold text-stone-600 transition hover:border-stone-300 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                キャンセル
+              </button>
+              <button
+                type="button"
+                disabled={isLoggingOut}
+                onClick={() => void confirmLogout()}
+                className="min-h-11 rounded-2xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isLoggingOut ? 'ログアウト中...' : 'ログアウト'}
+              </button>
+            </div>
+          </section>
         </div>
       ) : null}
     </main>

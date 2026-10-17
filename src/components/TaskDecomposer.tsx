@@ -369,8 +369,6 @@ export default function TaskDecomposer() {
         .eq('user_id', currentUserId)
         .order('created_at', { ascending: false })
 
-      console.log('loadSupabaseTasks', { currentUserId, count: data?.length ?? 0, error: error?.message ?? null })
-
       if (error) {
         setError('データの読み込みに失敗しました')
         return
@@ -396,12 +394,6 @@ export default function TaskDecomposer() {
 
     async function syncGuestTasksToSupabase(currentUserId: string) {
       const localTasks = readLocalTasks()
-      console.log('syncGuestTasksToSupabase start', {
-        currentUserId,
-        localTaskCount: localTasks.length,
-        hasLocalData: localTasks.length > 0,
-      })
-
       if (localTasks.length === 0) {
         await loadSupabaseTasks(currentUserId)
         return
@@ -417,7 +409,6 @@ export default function TaskDecomposer() {
       }))
 
       const { data, error } = await supabase.from('todos').upsert(rows).select('id')
-      console.log('syncGuestTasksToSupabase result', { rowsCount: rows.length, data, error: error?.message ?? null })
 
       if (error || !data || data.length !== rows.length) {
         setError('ゲストデータの同期に失敗しました')
@@ -431,15 +422,7 @@ export default function TaskDecomposer() {
     const syncAuthState = async () => {
       const {
         data: { session },
-        error,
       } = await supabase.auth.getSession()
-
-      console.log('getSession result', {
-        hasSession: !!session,
-        userId: session?.user?.id ?? null,
-        email: session?.user?.email ?? null,
-        error: error?.message ?? null,
-      })
 
       if (session?.user) {
         setUserId(session.user.id)
@@ -457,18 +440,11 @@ export default function TaskDecomposer() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log('onAuthStateChange fired', {
-        event,
-        hasSession: !!session,
-        userId: session?.user?.id ?? null,
-        email: session?.user?.email ?? null,
-      })
-
+    } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session?.user) {
         setUserId(session.user.id)
         setAuthReady(true)
-        await syncGuestTasksToSupabase(session.user.id)
+        void syncGuestTasksToSupabase(session.user.id)
         return
       }
 
@@ -535,17 +511,15 @@ export default function TaskDecomposer() {
   }
 
   async function summarizeTask(title: string, historyContext: string): Promise<string> {
-    try {
-      const response = await fetch('/api/summarize-task', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task: title, history: historyContext }),
-      })
-      const result = await readApiResponse<{ summary: string }>(response)
-      return result.summary.trim() || title
-    } catch {
-      return title
-    }
+    const response = await fetch('/api/summarize-task', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task: title, history: historyContext }),
+    })
+    const result = await readApiResponse<{ summary: string }>(response)
+    const summary = result.summary.trim()
+    if (!summary) throw new Error('タスクの要約を取得できませんでした')
+    return summary
   }
 
   async function redecomposeSubtask(taskId: string, subtaskId: string) {

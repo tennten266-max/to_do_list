@@ -2,6 +2,7 @@ import OpenAI from 'openai'
 import { NextResponse } from 'next/server'
 import { normalizeTaskAnalysis } from '@/lib/analyze'
 import { parseModelJson } from '@/lib/decompose'
+import { createAIProviderErrorResponse } from '@/lib/ai-provider-error'
 import { enforceAIRateLimit } from '@/lib/rate-limit'
 
 export const runtime = 'nodejs'
@@ -22,7 +23,13 @@ export async function POST(request: Request) {
     const rateLimitResponse = await enforceAIRateLimit(request)
     if (rateLimitResponse) return rateLimitResponse
 
-    const body = (await request.json()) as { task?: unknown; answer?: unknown } | null
+    let body: { task?: unknown; answer?: unknown } | null
+    try {
+      body = await request.json()
+    } catch {
+      return NextResponse.json({ error: 'リクエスト形式が不正です' }, { status: 400 })
+    }
+
     if (!body || typeof body !== 'object') {
       return NextResponse.json({ error: 'リクエスト形式が不正です' }, { status: 400 })
     }
@@ -65,7 +72,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json(normalizeTaskAnalysis(parseModelJson(content)))
   } catch (error) {
-    console.error('analyze-task API error:', error)
-    return NextResponse.json({ error: 'AI APIへの接続またはタスク分析に失敗しました。.env.local のキーとモデル設定を確認してください。' }, { status: 502 })
+    return createAIProviderErrorResponse(error, 'analyze-task')
   }
 }

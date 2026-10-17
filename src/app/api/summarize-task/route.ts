@@ -1,5 +1,6 @@
 import OpenAI from 'openai'
 import { NextResponse } from 'next/server'
+import { createAIProviderErrorResponse } from '@/lib/ai-provider-error'
 import { enforceAIRateLimit } from '@/lib/rate-limit'
 
 export const runtime = 'nodejs'
@@ -17,7 +18,13 @@ export async function POST(request: Request) {
     const rateLimitResponse = await enforceAIRateLimit(request)
     if (rateLimitResponse) return rateLimitResponse
 
-    const body = (await request.json()) as { task?: unknown; history?: unknown } | null
+    let body: { task?: unknown; history?: unknown } | null
+    try {
+      body = await request.json()
+    } catch {
+      return NextResponse.json({ error: 'リクエスト形式が不正です' }, { status: 400 })
+    }
+
     if (!body || typeof body !== 'object') {
       return NextResponse.json({ error: 'リクエスト形式が不正です' }, { status: 400 })
     }
@@ -54,7 +61,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ summary })
   } catch (error) {
-    console.error('summarize-task API error:', error)
-    return NextResponse.json({ error: 'タスク要約に失敗しました' }, { status: 502 })
+    return createAIProviderErrorResponse(error, 'summarize-task')
   }
 }

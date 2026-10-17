@@ -1,5 +1,6 @@
 import OpenAI from 'openai'
 import { NextResponse } from 'next/server'
+import { createAIProviderErrorResponse } from '@/lib/ai-provider-error'
 import { normalizeSubtaskSteps, parseModelJson } from '@/lib/decompose'
 import { enforceAIRateLimit } from '@/lib/rate-limit'
 
@@ -43,12 +44,17 @@ export async function POST(request: Request) {
     const rateLimitResponse = await enforceAIRateLimit(request)
     if (rateLimitResponse) return rateLimitResponse
 
-    const body = (await request.json()) as {
+    let body: {
       title?: unknown
       summary?: unknown
       situation?: unknown
       subtask?: unknown
     } | null
+    try {
+      body = await request.json()
+    } catch {
+      return NextResponse.json({ error: 'リクエスト形式が不正です' }, { status: 400 })
+    }
 
     if (!body || typeof body !== 'object') {
       return NextResponse.json({ error: 'リクエスト形式が不正です' }, { status: 400 })
@@ -94,7 +100,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json(normalizeSubtaskSteps(parseModelJson(content)))
   } catch (error) {
-    console.error('redecompose-subtask API error:', error)
-    return NextResponse.json({ error: '子タスクの再分解に失敗しました' }, { status: 502 })
+    return createAIProviderErrorResponse(error, 'redecompose-subtask')
   }
 }

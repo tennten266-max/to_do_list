@@ -1,5 +1,6 @@
 import OpenAI from 'openai'
 import { NextResponse } from 'next/server'
+import { createAIProviderErrorResponse } from '@/lib/ai-provider-error'
 import { normalizeSteps, parseModelJson } from '@/lib/decompose'
 import { enforceAIRateLimit } from '@/lib/rate-limit'
 
@@ -80,7 +81,13 @@ export async function POST(request: Request) {
     const rateLimitResponse = await enforceAIRateLimit(request)
     if (rateLimitResponse) return rateLimitResponse
 
-    const body = (await request.json()) as { task?: unknown; answer?: unknown } | null
+    let body: { task?: unknown; answer?: unknown } | null
+    try {
+      body = await request.json()
+    } catch {
+      return NextResponse.json({ error: 'リクエスト形式が不正です' }, { status: 400 })
+    }
+
     if (!body || typeof body !== 'object') {
       return NextResponse.json({ error: 'リクエスト形式が不正です' }, { status: 400 })
     }
@@ -137,7 +144,9 @@ export async function POST(request: Request) {
         response_format: { type: 'json_object' },
       })
       const reviewContent = reviewCompletion.choices[0]?.message?.content
-      if (!reviewContent) return NextResponse.json(initialSteps)
+      if (!reviewContent) {
+        return NextResponse.json({ error: 'AIレビュー結果を取得できませんでした' }, { status: 502 })
+      }
 
       const review = normalizeReview(parseModelJson(reviewContent))
       if (review.isGood) return NextResponse.json(initialSteps)
@@ -156,19 +165,18 @@ export async function POST(request: Request) {
           response_format: { type: 'json_object' },
         })
         const regenerateContent = regenerateCompletion.choices[0]?.message?.content
-        if (!regenerateContent) return NextResponse.json(initialSteps)
+        if (!regenerateContent) {
+          return NextResponse.json({ error: 'タスクの再生成結果を取得できませんでした' }, { status: 502 })
+        }
 
         return NextResponse.json(normalizeSteps(parseModelJson(regenerateContent)))
       } catch (error) {
-        console.error('decompose-task regeneration error:', error)
-        return NextResponse.json(initialSteps)
+        return createAIProviderErrorResponse(error, 'decompose-task regeneration')
       }
     } catch (error) {
-      console.error('decompose-task review error:', error)
-      return NextResponse.json(initialSteps)
+      return createAIProviderErrorResponse(error, 'decompose-task review')
     }
   } catch (error) {
-    console.error('decompose-task API error:', error)
-    return NextResponse.json({ error: 'AI APIへの接続またはタスク分解に失敗しました。.env.local のキーとモデル設定を確認してください。' }, { status: 502 })
+    return createAIProviderErrorResponse(error, 'decompose-task')
   }
 }
